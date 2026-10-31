@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#1D4ED8">
+<title>مدني اكسبريس</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,"Segoe UI",Tahoma,sans-serif;background:#F4F8FF;color:#0F1B2D;line-height:1.6}
+header{background:#1D4ED8;color:#fff;padding:14px 16px;display:flex;align-items:center;gap:12px;border-radius:0 0 24px 24px}
+header img{width:84px;height:47px;object-fit:cover;border-radius:10px}header span{font-weight:700;font-size:14px}
+main{max-width:520px;margin:0 auto;padding:16px}
+.card{background:#fff;border:1px solid #D3E0F5;border-radius:18px;padding:16px;margin-bottom:12px}
+h1{font-size:21px;color:#0B2A6F;margin:0 0 10px}h2{font-size:17px;color:#0B2A6F;margin:0 0 8px}
+label{display:block;font-size:14px;color:#51607A;margin:10px 0}
+input,select{width:100%;font:inherit;padding:12px;border:1.5px solid #C9D8F2;border-radius:12px;margin-top:4px;background:#fff;color:#0F1B2D}
+.ph{display:flex;gap:8px;align-items:center}.ph span{font-weight:700;color:#0B2A6F}
+button{font:inherit;cursor:pointer}.b{width:100%;min-height:50px;border:0;border-radius:14px;background:#1D4ED8;color:#fff;font-weight:700;font-size:16px;margin-top:8px}
+.b:disabled{opacity:.6}.s{border:0;border-radius:10px;background:#EAF1FF;color:#1D4ED8;font-weight:700;min-height:44px;padding:0 14px}
+.l{background:none;border:0;color:#1D4ED8;font-weight:700;min-height:44px;width:100%}.er{color:#B42318;font-size:14px;min-height:20px;margin:6px 0}
+.m{color:#51607A;font-size:13px}.r{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.tabs{display:flex;gap:8px;margin-bottom:12px}.tabs button{flex:1;border:0;border-radius:12px;min-height:44px;background:#EAF1FF;color:#1D4ED8;font-weight:700}.tabs .on{background:#1D4ED8;color:#fff}
+</style></head><body><div id="app"></div>
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import {getAuth,createUserWithEmailAndPassword,signInWithEmailAndPassword,signOut,deleteUser,onAuthStateChanged} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import {getFirestore,doc,getDoc,setDoc,updateDoc,deleteDoc,addDoc,collection,getDocs,query,where,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+const cfg={apiKey:"AIzaSyBHUCGqZmIU-il4kN5-z67llvKfK2V6vis",authDomain:"madaniexpress.firebaseapp.com",projectId:"madaniexpress",storageBucket:"madaniexpress.firebasestorage.app",messagingSenderId:"252543536172",appId:"1:252543536172:web:92a62d6604ee07621ed589"};
+const fb=initializeApp(cfg),auth=getAuth(fb),db=getFirestore(fb);
+const $=s=>document.querySelector(s),app=$('#app');
+const E=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num=p=>{let d=String(p).replace(/\D/g,'');if(d.startsWith('249'))d=d.slice(3);d=d.replace(/^0+/,'');return d.length>=9?d:null};
+const mail=d=>`249${d}@madani.app`;
+const ERR={'auth/email-already-in-use':'رقم الهاتف مسجل مسبقًا','auth/invalid-credential':'رقم الهاتف أو كلمة السر غير صحيحة','auth/weak-password':'كلمة السر قصيرة (6 أحرف على الأقل)','auth/network-request-failed':'تعذّر الاتصال بالإنترنت','auth/too-many-requests':'محاولات كثيرة، حاول لاحقًا'};
+const msg=e=>ERR[e&&e.code]||'حدث خطأ، حاول مرة أخرى';
+const ROLE={customer:'عميل',provider:'مقدم خدمة',rider:'طيار'};
+let me=null,prof=null,admin=false,districts=[],mode='login',busy=false,tab='a';
+const shell=h=>{app.innerHTML=`<header><img src="logo.png" alt="مدني اكسبريس"><span>مدني كلها تحت خدمتنا</span></header><main>${h}</main>`};
+const bindOut=()=>{const b=$('#out');if(b)b.onclick=()=>signOut(auth)};
+const outBtn='<button class="l" id="out">تسجيل الخروج</button>';
+async function loadDistricts(){try{districts=(await getDocs(collection(db,'districts'))).docs.map(d=>({id:d.id,...d.data()}))}catch(e){districts=[]}}
+function authView(){
+  const reg=mode==='reg';
+  shell(`<div class="card"><h1>${reg?'إنشاء حساب':'تسجيل الدخول'}</h1>
+  ${reg?'<label>الاسم<input id="nm" autocomplete="name"></label>':''}
+  <label>رقم الهاتف<div class="ph"><input id="ph" type="tel" inputmode="tel" dir="ltr" placeholder="9XXXXXXXX"><span dir="ltr">+249</span></div></label>
+  <label>كلمة السر<input id="pw" type="password" autocomplete="${reg?'new-password':'current-password'}"></label>
+  ${reg?`<label>تأكيد كلمة السر<input id="pw2" type="password"></label>
+  <label>نوع الحساب<select id="rl"><option value="customer">عميل</option><option value="provider">مقدم خدمة (مطعم، متجر، مطبخ منزلي...)</option><option value="rider">طيار</option></select></label>
+  <label>الحي أو القرية<select id="ds"><option value="">اختر</option>${districts.map(d=>`<option>${E(d.name)}</option>`).join('')}</select></label>`:''}
+  <p id="er" class="er"></p><button class="b" id="go">${reg?'إنشاء حساب':'تسجيل الدخول'}</button>
+  <button class="l" id="sw">${reg?'لدي حساب':'إنشاء حساب جديد'}</button>
+  ${reg?'':'<p class="m">نسيت كلمة السر؟ تواصل مع الإدارة لإعادة ضبطها.</p>'}</div>`);
+  $('#sw').onclick=()=>{mode=reg?'login':'reg';authView()};
+  $('#go').onclick=reg?doReg:doLogin;
+}
+const fail=t=>{$('#er').textContent=t;$('#go').disabled=false};
+async function doLogin(){
+  const d=num($('#ph').value),pw=$('#pw').value;
+  if(!d||pw.length<6)return fail('أدخل رقم هاتف صحيحًا وكلمة سر من 6 أحرف على الأقل');
+  $('#go').disabled=true;
+  try{await signInWithEmailAndPassword(auth,mail(d),pw)}catch(e){fail(msg(e))}
+}
+async function doReg(){
+  const nm=$('#nm').value.trim(),d=num($('#ph').value),pw=$('#pw').value,rl=$('#rl').value,ds=$('#ds').value;
+  if(nm.length<2)return fail('اكتب اسمك');
+  if(!d)return fail('أدخل رقم هاتف صحيحًا');
+  if(pw.length<6)return fail('كلمة السر 6 أحرف على الأقل');
+  if(pw!==$('#pw2').value)return fail('كلمة السر غير متطابقة');
+  if(!ds)return fail('اختر الحي أو القرية');
+  $('#go').disabled=true;busy=true;let cred;
+  try{
+    cred=await createUserWithEmailAndPassword(auth,mail(d),pw);
+    await setDoc(doc(db,'users',cred.user.uid),{name:nm,phone:'+249'+d,role:rl,district:ds,status:rl==='customer'?'active':'pending',createdAt:serverTimestamp()});
+    busy=false;boot(cred.user);
+  }catch(e){busy=false;if(cred)try{await deleteUser(cred.user)}catch(_){ }fail(msg(e))}
+}
+async function boot(u){
+  me=u;
+  if(!u){prof=null;admin=false;await loadDistricts();return authView()}
+  shell('<p class="m">جارٍ التحميل…</p>');
+  try{const [p,a]=await Promise.all([getDoc(doc(db,'users',u.uid)),getDoc(doc(db,'admins',u.uid))]);prof=p.exists()?p.data():null;admin=a.exists()}
+  catch(e){shell(`<div class="card"><p class="er">تعذّر تحميل بياناتك، تأكد من الإنترنت.</p>${outBtn}</div>`);return bindOut()}
+  admin?adminView():homeView();
+}
+function homeView(){
+  let h;
+  if(!prof)h='<p>لم نجد بيانات حسابك. تواصل مع الإدارة.</p>';
+  else if(prof.status==='pending')h=`<h1>أهلًا ${E(prof.name)}</h1><p>حسابك (${ROLE[prof.role]}) قيد المراجعة من الإدارة. سنفعّله قريبًا.</p>`;
+  else if(prof.status==='rejected')h='<h1>تعذّر اعتماد الحساب</h1><p>تواصل مع الإدارة لمعرفة السبب.</p>';
+  else h=`<h1>أهلًا ${E(prof.name)}</h1><p>حسابك (${ROLE[prof.role]}) مفعّل. الخطوة القادمة: ${prof.role==='customer'?'قائمة المطاعم والطلب':prof.role==='rider'?'استقبال الطلبات':'قائمة المحل واستقبال الطلبات'}.</p>`;
+  shell(`<div class="card">${h}</div>${outBtn}`);bindOut();
+}
+async function adminView(){
+  shell(`<div class="tabs"><button data-t="a" class="${tab==='a'?'on':''}">اعتماد الحسابات</button><button data-t="s" class="${tab==='s'?'on':''}">الأحياء والرسوم</button></div><div id="bd"><p class="m">جارٍ التحميل…</p></div>${outBtn}`);
+  bindOut();document.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{tab=b.dataset.t;adminView()});
+  try{tab==='a'?await approvals():await settings()}catch(e){$('#bd').innerHTML='<div class="card"><p class="er">تعذّر التحميل، تحقق من قواعد الحماية والاتصال.</p></div>'}
+}
+async function approvals(){
+  const s=await getDocs(query(collection(db,'users'),where('status','==','pending')));
+  $('#bd').innerHTML=s.empty?'<div class="card">لا توجد حسابات بانتظار الاعتماد.</div>':s.docs.map(x=>{const u=x.data();return `<div class="card"><div class="r"><b>${E(u.name)}</b><span class="m">${ROLE[u.role]}</span></div><div class="m">${E(u.district)} • ${E(u.phone)}</div><div class="r" style="margin-top:8px"><button class="s" data-r="${x.id}">رفض</button><button class="s" style="background:#1D4ED8;color:#fff" data-a="${x.id}">اعتماد</button></div></div>`}).join('');
+  document.querySelectorAll('[data-a],[data-r]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{await updateDoc(doc(db,'users',b.dataset.a||b.dataset.r),{status:b.dataset.a?'active':'rejected'});approvals()}catch(e){b.disabled=false}});
+}
+async function settings(){
+  await loadDistricts();
+  const s=await getDoc(doc(db,'settings','main')),v=s.exists()?s.data():{};
+  $('#bd').innerHTML=`<div class="card"><h2>الرسوم</h2><label>سعر الكيلومتر (ج.س)<input id="pk" type="number" value="${v.pricePerKm??700}"></label><label>معامل المسافة<input id="fc" type="number" step="0.1" value="${v.factor??1.3}"></label><label>معامل المستعجل<input id="uf" type="number" step="0.1" value="${v.urgentFactor??1.5}"></label><label>عمولة المطعم %<input id="cr" type="number" value="${v.restCommission??7}"></label><label>عمولة التوصيل %<input id="cd" type="number" value="${v.deliveryCommission??10}"></label><p id="er" class="er"></p><button class="b" id="sv">حفظ</button></div>
+  <div class="card"><h2>الأحياء والقرى</h2>${districts.map(d=>`<div class="r" style="margin:6px 0"><span>${E(d.name)}</span><button class="s" data-d="${d.id}">حذف</button></div>`).join('')||'<p class="m">لا توجد أحياء بعد.</p>'}<label>إضافة حي أو قرية<input id="dn"></label><button class="b" id="ad">إضافة</button></div>`;
+  $('#sv').onclick=async()=>{try{await setDoc(doc(db,'settings','main'),{pricePerKm:+$('#pk').value,factor:+$('#fc').value,urgentFactor:+$('#uf').value,restCommission:+$('#cr').value,deliveryCommission:+$('#cd').value});$('#er').style.color='#15803D';$('#er').textContent='تم الحفظ'}catch(e){$('#er').textContent='تعذّر الحفظ'}};
+  $('#ad').onclick=async()=>{const n=$('#dn').value.trim();if(!n)return;try{await addDoc(collection(db,'districts'),{name:n});settings()}catch(e){}};
+  document.querySelectorAll('[data-d]').forEach(b=>b.onclick=async()=>{try{await deleteDoc(doc(db,'districts',b.dataset.d));settings()}catch(e){}});
+}
+onAuthStateChanged(auth,u=>{if(!busy)boot(u)});
+</script></body></html>
