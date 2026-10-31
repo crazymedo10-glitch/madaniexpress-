@@ -31,26 +31,28 @@ const num=p=>{let d=String(p).replace(/\D/g,'');if(d.startsWith('249'))d=d.slice
 const mail=d=>`249${d}@madani.app`;
 const ERR={'auth/email-already-in-use':'رقم الهاتف مسجل مسبقًا','auth/invalid-credential':'رقم الهاتف أو كلمة السر غير صحيحة','auth/weak-password':'كلمة السر قصيرة (6 أحرف على الأقل)','auth/network-request-failed':'تعذّر الاتصال بالإنترنت','auth/too-many-requests':'محاولات كثيرة، حاول لاحقًا'};
 const msg=e=>ERR[e&&e.code]||'حدث خطأ، حاول مرة أخرى';
-const ROLE={customer:'عميل',provider:'مقدم خدمة',rider:'طيار'};
+const ROLE={customer:'عميل',provider:'مقدم خدمة',rider:'طيار',admin:'مدير'};
 let me=null,prof=null,admin=false,districts=[],mode='login',busy=false,tab='a';
 const shell=h=>{app.innerHTML=`<header><img src="logo.png" alt="مدني اكسبريس"><span>مدني كلها تحت خدمتنا</span></header><main>${h}</main>`};
 const bindOut=()=>{const b=$('#out');if(b)b.onclick=()=>signOut(auth)};
 const outBtn='<button class="l" id="out">تسجيل الخروج</button>';
 async function loadDistricts(){try{districts=(await getDocs(collection(db,'districts'))).docs.map(d=>({id:d.id,...d.data()}))}catch(e){districts=[]}}
 function authView(){
-  const reg=mode==='reg';
-  shell(`<div class="card"><h1>${reg?'إنشاء حساب':'تسجيل الدخول'}</h1>
-  ${reg?'<label>الاسم<input id="nm" autocomplete="name"></label>':''}
+  const reg=mode==='reg',adm=mode==='adm',login=!reg&&!adm;
+  shell(`<div class="card"><h1>${login?'تسجيل الدخول':adm?'تسجيل الإدارة':'إنشاء حساب'}</h1>
+  ${login?'':'<label>الاسم<input id="nm" autocomplete="name"></label>'}
   <label>رقم الهاتف<div class="ph"><input id="ph" type="tel" inputmode="tel" dir="ltr" placeholder="9XXXXXXXX"><span dir="ltr">+249</span></div></label>
-  <label>كلمة السر<input id="pw" type="password" autocomplete="${reg?'new-password':'current-password'}"></label>
-  ${reg?`<label>تأكيد كلمة السر<input id="pw2" type="password"></label>
-  <label>نوع الحساب<select id="rl"><option value="customer">عميل</option><option value="provider">مقدم خدمة (مطعم، متجر، مطبخ منزلي...)</option><option value="rider">طيار</option></select></label>
+  <label>كلمة السر<input id="pw" type="password" autocomplete="${login?'current-password':'new-password'}"></label>
+  ${login?'':'<label>تأكيد كلمة السر<input id="pw2" type="password"></label>'}
+  ${reg?`<label>نوع الحساب<select id="rl"><option value="customer">عميل</option><option value="provider">مقدم خدمة (مطعم، متجر، مطبخ منزلي...)</option><option value="rider">طيار</option></select></label>
   <label>الحي أو القرية<select id="ds"><option value="">اختر</option>${districts.map(d=>`<option>${E(d.name)}</option>`).join('')}</select></label>`:''}
-  <p id="er" class="er"></p><button class="b" id="go">${reg?'إنشاء حساب':'تسجيل الدخول'}</button>
-  <button class="l" id="sw">${reg?'لدي حساب':'إنشاء حساب جديد'}</button>
-  ${reg?'':'<p class="m">نسيت كلمة السر؟ تواصل مع الإدارة لإعادة ضبطها.</p>'}</div>`);
-  $('#sw').onclick=()=>{mode=reg?'login':'reg';authView()};
-  $('#go').onclick=reg?doReg:doLogin;
+  ${adm?'<label>رمز التأسيس (للمدير الأول فقط، واتركه فارغًا إن كان هناك مدير)<input id="cd" type="password"></label><p class="m">بعد التسجيل يعتمد طلبك مدير حالي من داخل التطبيق.</p>':''}
+  <p id="er" class="er"></p><button class="b" id="go">${login?'تسجيل الدخول':adm?'إرسال طلب التسجيل':'إنشاء حساب'}</button>
+  <button class="l" id="sw">${login?'إنشاء حساب جديد':'لدي حساب'}</button>
+  ${login?'<button class="l" id="ad" style="font-size:13px;color:#51607A">تسجيل الإدارة</button><p class="m">نسيت كلمة السر؟ تواصل مع الإدارة لإعادة ضبطها.</p>':''}</div>`);
+  $('#sw').onclick=()=>{mode=login?'reg':'login';authView()};
+  if($('#ad'))$('#ad').onclick=()=>{mode='adm';authView()};
+  $('#go').onclick=login?doLogin:adm?doAdminReg:doReg;
 }
 const fail=t=>{$('#er').textContent=t;$('#go').disabled=false};
 async function doLogin(){
@@ -70,6 +72,21 @@ async function doReg(){
   try{
     cred=await createUserWithEmailAndPassword(auth,mail(d),pw);
     await setDoc(doc(db,'users',cred.user.uid),{name:nm,phone:'+249'+d,role:rl,district:ds,status:rl==='customer'?'active':'pending',createdAt:serverTimestamp()});
+    busy=false;boot(cred.user);
+  }catch(e){busy=false;if(cred)try{await deleteUser(cred.user)}catch(_){ }fail(msg(e))}
+}
+async function doAdminReg(){
+  const nm=$('#nm').value.trim(),d=num($('#ph').value),pw=$('#pw').value,code=$('#cd').value;
+  if(nm.length<2)return fail('اكتب اسمك');
+  if(!d)return fail('أدخل رقم هاتف صحيحًا');
+  if(pw.length<6)return fail('كلمة السر 6 أحرف على الأقل');
+  if(pw!==$('#pw2').value)return fail('كلمة السر غير متطابقة');
+  $('#go').disabled=true;busy=true;let cred;
+  try{
+    cred=await createUserWithEmailAndPassword(auth,mail(d),pw);
+    const id=cred.user.uid;
+    await setDoc(doc(db,'users',id),{name:nm,phone:'+249'+d,role:'admin',district:'-',status:'pending',createdAt:serverTimestamp()});
+    if(code){try{await setDoc(doc(db,'admins',id),{ok:true,code});await updateDoc(doc(db,'users',id),{status:'active'})}catch(e){}}
     busy=false;boot(cred.user);
   }catch(e){busy=false;if(cred)try{await deleteUser(cred.user)}catch(_){ }fail(msg(e))}
 }
@@ -96,8 +113,8 @@ async function adminView(){
 }
 async function approvals(){
   const s=await getDocs(query(collection(db,'users'),where('status','==','pending')));
-  $('#bd').innerHTML=s.empty?'<div class="card">لا توجد حسابات بانتظار الاعتماد.</div>':s.docs.map(x=>{const u=x.data();return `<div class="card"><div class="r"><b>${E(u.name)}</b><span class="m">${ROLE[u.role]}</span></div><div class="m">${E(u.district)} • ${E(u.phone)}</div><div class="r" style="margin-top:8px"><button class="s" data-r="${x.id}">رفض</button><button class="s" style="background:#1D4ED8;color:#fff" data-a="${x.id}">اعتماد</button></div></div>`}).join('');
-  document.querySelectorAll('[data-a],[data-r]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{await updateDoc(doc(db,'users',b.dataset.a||b.dataset.r),{status:b.dataset.a?'active':'rejected'});approvals()}catch(e){b.disabled=false}});
+  $('#bd').innerHTML=s.empty?'<div class="card">لا توجد حسابات بانتظار الاعتماد.</div>':s.docs.map(x=>{const u=x.data();return `<div class="card"><div class="r"><b>${E(u.name)}</b><span class="m">${ROLE[u.role]}</span></div><div class="m">${E(u.district)} • ${E(u.phone)}</div><div class="r" style="margin-top:8px"><button class="s" data-r="${x.id}">رفض</button><button class="s" style="background:#1D4ED8;color:#fff" data-a="${x.id}" data-role="${u.role}">${u.role==='admin'?'اعتماد كمدير':'اعتماد'}</button></div></div>`}).join('');
+  document.querySelectorAll('[data-a],[data-r]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{const id=b.dataset.a||b.dataset.r;if(b.dataset.a&&b.dataset.role==='admin')await setDoc(doc(db,'admins',id),{ok:true});await updateDoc(doc(db,'users',id),{status:b.dataset.a?'active':'rejected'});approvals()}catch(e){b.disabled=false}});
 }
 async function settings(){
   await loadDistricts();
