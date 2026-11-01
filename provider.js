@@ -1,19 +1,21 @@
-import {getFirestore,doc,getDoc,setDoc,updateDoc,deleteDoc,addDoc,collection,getDocs,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import {getFirestore,doc,getDoc,setDoc,updateDoc,deleteDoc,addDoc,collection,getDocs,query,where,onSnapshot,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 const db=getFirestore();
 const TYPES={restaurant:'مطعم',grocery:'بقالة وسوبرماركت',pharmacy:'صيدلية',bakery:'مخبز وحلويات',home:'مطبخ منزلي',other:'متجر آخر'};
-let C,S={},tab='m',pos=null;
+const ST={new:'جديد',accepted:'قيد التحضير',ready:'جاهز بانتظار الطيار',assigned:'مع الطيار',delivered:'تم التسليم',rejected:'مرفوض'};
+let C,S={},tab='o',pos=null,unsubO=null;
 const shrink=f=>new Promise((ok,no)=>{const r=new FileReader();r.onerror=no;r.onload=()=>{const i=new Image();i.onerror=no;i.onload=()=>{const k=Math.min(1,480/Math.max(i.width,i.height)),c=document.createElement('canvas');c.width=Math.round(i.width*k);c.height=Math.round(i.height*k);c.getContext('2d').drawImage(i,0,0,c.width,c.height);ok(c.toDataURL('image/jpeg',.7))};i.src=r.result};r.readAsDataURL(f)});
 export async function run(c){
   C=c;
   try{const d=await getDoc(doc(db,'providers',C.uid));S=d.exists()?d.data():{}}catch(e){S={}}
-  if(!S.shopName)tab='i';
+  tab=S.shopName?'o':'i';
   draw();
 }
 function draw(){
-  C.shell(`<div class="tabs"><button data-t="m" class="${tab==='m'?'on':''}">القائمة</button><button data-t="i" class="${tab==='i'?'on':''}">بيانات المحل</button></div><div id="bd"></div>${C.outBtn}`);
+  if(unsubO){unsubO();unsubO=null}
+  C.shell(`<div class="tabs"><button data-t="o" class="${tab==='o'?'on':''}">الطلبات</button><button data-t="m" class="${tab==='m'?'on':''}">القائمة</button><button data-t="i" class="${tab==='i'?'on':''}">بيانات المحل</button></div><div id="bd"></div>${C.outBtn}`);
   C.bindOut();
-  document.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{if(b.dataset.t==='m'&&!S.shopName)return;tab=b.dataset.t;draw()});
-  tab==='i'?info():menu();
+  document.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{if(b.dataset.t!=='i'&&!S.shopName)return;tab=b.dataset.t;draw()});
+  tab==='i'?info():tab==='o'?ordersTab():menu();
 }
 function info(){
   const o=S.open!==false;
@@ -70,4 +72,21 @@ async function menu(){
       await addDoc(collection(db,'providers',C.uid,'items'),d);menu();
     }catch(x){b.disabled=false;e.textContent='تعذّر الحفظ، جرّب صورة أصغر'}
   });
+}
+function ordersTab(){
+  const bd=C.$('#bd');bd.innerHTML='<p class="m">جارٍ التحميل…</p>';
+  unsubO=onSnapshot(query(collection(db,'orders'),where('pid','==',C.uid)),snap=>{
+    const rank={new:0,accepted:1,ready:2};
+    const l=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(rank[a.status]??9)-(rank[b.status]??9)||(b.createdAt?.seconds||9e9)-(a.createdAt?.seconds||9e9));
+    const act=o=>o.status==='new'?`<div class="r"><button class="s" data-st="${o.id}|rejected" style="flex:1">رفض</button><button class="b" data-st="${o.id}|accepted" style="flex:2;margin:0">${o.pay==='bank'?'تأكيد وصول التحويل وقبول الطلب':'قبول الطلب'}</button></div>`:o.status==='accepted'?`<button class="b" data-st="${o.id}|ready">جاهز للاستلام</button>`:o.status==='ready'?'<p class="m">بانتظار الطيار.</p>':'';
+    bd.innerHTML=l.map(o=>`<div class="card" ${o.status==='new'?'style="border:2px solid #1D4ED8"':''}><div class="r"><span class="tg">${ST[o.status]||o.status}</span>${o.urgent?'<span class="tg" style="background:#1D4ED8;color:#fff">مستعجل</span>':''}</div>
+    <b>${C.E(o.cname)}</b><div class="m">${C.E(o.addr)} • ${o.dist} كم</div>
+    <a href="https://www.google.com/maps?q=${o.lat},${o.lng}" target="_blank" rel="noopener">موقع التوصيل على الخريطة</a>
+    <div>${o.items.map(i=>`<div class="r"><span>${i.qty} × ${C.E(i.name)}</span><b>${i.qty*i.price}</b></div>`).join('')}</div>
+    <div class="r"><b>قيمة الأصناف</b><b>${o.sub} ج.س</b></div>
+    <div class="m">الدفع: ${o.pay==='bank'?'تحويل بنكي':'عند الاستلام'}</div>
+    ${o.receipt?`<img src="${o.receipt}" alt="إشعار التحويل" style="max-width:100%;border-radius:12px">`:''}
+    ${act(o)}</div>`).join('')||'<div class="card"><p class="m">لا توجد طلبات بعد.</p></div>';
+    bd.querySelectorAll('[data-st]').forEach(b=>b.onclick=async()=>{const [id,st]=b.dataset.st.split('|');b.disabled=true;try{await updateDoc(doc(db,'orders',id),{status:st})}catch(e){b.disabled=false;alert('تعذّر التحديث')}});
+  },()=>{bd.innerHTML='<div class="card"><p class="er">تعذّر تحميل الطلبات.</p></div>'});
 }
